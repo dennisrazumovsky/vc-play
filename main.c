@@ -52,6 +52,8 @@
 #define FLAG_LONG_MOD_TO_FILE	0xff40
 #define FLAG_LONG_USE_HDR_FILE	0xfe01
 #define FLAG_LONG_USE_HHDR_FILE	0xfe02
+#define FLAG_LONG_PIM		0xfe03
+#define FLAG_LONG_PIM_HIDDEN	0xfe04
 #define FLAG_LONG_NO_RETRIES	0xfabc
 
 
@@ -68,19 +70,20 @@ void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: tcplay -c -d device [-g] [-z] [-w] [-a pbkdf_hash] [-b cipher]\n"
+	    "usage: tcplay -c -d device [--pim=N] [-g [--pim-hidden=N]] [-z] [-w]\n"
+	    "              [-a pbkdf_hash] [-b cipher]\n"
 	    "              [-f keyfile_hidden] [-k keyfile] [-x pbkdf_hash] [-y cipher]\n"
-	    "       tcplay -i -d device [-e] [-p] [-f keyfile_hidden] [-k keyfile]\n"
-	    "              [-s system_device] [--fde] [--use-backup]\n"
+	    "       tcplay -i -d device [-e [--pim-hidden=N]] [-p] [-f keyfile_hidden] [-k keyfile]\n"
+	    "              [-s system_device] [--fde] [--pim=N] [--use-backup]\n"
 	    "              [--use-hdr-file=hdr_file] [--use-hidden-hdr-file=hdr_file]\n"
-	    "       tcplay -m mapping -d device [-e] [-p] [-f keyfile_hidden] [-k keyfile]\n"
-	    "              [-s system_device] [--fde] [--use-backup] [--allow-trim]\n"
+	    "       tcplay -m mapping -d device [-e [--pim-hidden=N]] [-p] [-f keyfile_hidden] [-k keyfile]\n"
+	    "              [-s system_device] [--fde] [--pim=N] [--use-backup] [--allow-trim]\n"
 	    "              [--use-hdr-file=hdr_file] [--use-hidden-hdr-file=hdr_file]\n"
-	    "       tcplay --modify -d device [-k keyfile] [--new-keyfile=keyfile]\n"
+	    "       tcplay --modify -d device [--pim=N] [-k keyfile] [--new-keyfile=keyfile]\n"
 	    "              [--new-pbkdf-prf=pbkdf_hash] [-s system_device] [--fde]\n"
-	    "              [--use-backup] [--save-hdr-to-file=hdr_file] [-w]\n"
+	    "              [--use-backup] [--save-hdr-backup=hdr_file] [-w]\n"
 	    "              [--use-hdr-file=hdr_file] [--use-hidden-hdr-file=hdr_file]\n"
-	    "       tcplay --modify -d device [-k keyfile] --restore-from-backup-hdr [-w]\n"
+	    "       tcplay --modify -d device [--pim=N] [-k keyfile] --restore-from-backup-hdr [-w]\n"
 	    "       tcplay -j mapping\n"
 	    "       tcplay -u mapping\n"
 	    "       tcplay -h | -v\n"
@@ -115,6 +118,12 @@ usage(void)
 	    "\t To see valid options, specify '-b help'.\n"
 	    " -g, --hidden\n"
 	    "\t Specifies that the newly created volume will contain a hidden volume.\n"
+	    " --pim=N\n"
+	    "\t Sets the VeraCrypt PIM for the new volume. With --hidden, it applies\n"
+	    "\t to the outer volume. Zero (the default) uses the standard iteration count.\n"
+	    " --pim-hidden=N\n"
+	    "\t Sets the VeraCrypt PIM for the hidden volume. Requires --hidden.\n"
+	    "\t Defaults to zero independently of --pim.\n"
 	    " -x <pbkdf prf algorithm>, --pbkdf-prf=<pbkdf prf algorithm>\n"
 	    "\t Specifies which hashing function to use for the PBKDF password\n"
 	    "\t derivation when creating a new hidden volume.  By default, the\n"
@@ -132,6 +141,9 @@ usage(void)
 	    "\t testing.\n"
 	    "\n"
 	    "Valid options for --modify are:\n"
+	    " --pim=N\n"
+	    "\t Uses the current VeraCrypt PIM to open the source header and\n"
+	    "\t keeps it when writing the new headers.\n"
 	    " --new-keyfile=<key file>\n"
 	    "\t Specifies a key file to use for the password derivation, when\n"
 	    "\t re-encrypting the header, can appear multiple times.\n"
@@ -156,8 +168,8 @@ usage(void)
 	    " --restore-from-backup-hdr\n"
 	    "\t Implies --use-backup, no new PBKDF hashing function, no new keyfiles\n"
 	    "\t and no new passphrase.\n"
-	    "\t In other words, this will simply restore both headers from the backup\n"
-	    "\t header. This option cannot be used to restore from a backup header file.\n"
+	    "\t Restores both headers using the passphrase, keyfiles and PIM of\n"
+	    "\t the backup header.\n"
 	    " -w, --weak-keys\n"
 	    "\t Uses a weak source of entropy (urandom) for salt material. The\n"
 	    "\t key material is not affected, as the master keys are kept intact.\n"
@@ -167,8 +179,13 @@ usage(void)
 	    "\t the header files on disk.\n"
 	    "\n"
 	    "Valid options for --info and --map are:\n"
+	    " --pim=N\n"
+	    "\t Sets the VeraCrypt Personal Iterations Multiplier for a non-system\n"
+	    "\t volume. Zero (the default) uses the standard PBKDF2 iteration count.\n"
 	    " -e, --protect-hidden\n"
 	    "\t Protect a hidden volume when mounting the outer volume.\n"
+	    " --pim-hidden=N\n"
+	    "\t Sets the VeraCrypt PIM for the hidden volume with --protect-hidden.\n"
 	    " -p, --prompt-passphrase\n"
 	    "\t Immediately prompt for a passphrase even if a keyfile is supplied.\n"
 	    " -s <disk path>, --system-encryption=<disk path>\n"
@@ -218,6 +235,8 @@ static struct option longopts[] = {
 	{ "protect-hidden",	no_argument,		NULL, 'e' },
 	{ "device",		required_argument,	NULL, 'd' },
 	{ "prompt-passphrase",	no_argument,		NULL, 'p' },
+	{ "pim",		required_argument,	NULL, FLAG_LONG_PIM },
+	{ "pim-hidden",		required_argument,	NULL, FLAG_LONG_PIM_HIDDEN },
 	{ "system-encryption",	required_argument,	NULL, 's' },
 	{ "allow-trim",		no_argument,		NULL, 't' },
 	{ "fde",		no_argument,		NULL, FLAG_LONG_FDE },
@@ -251,6 +270,7 @@ main(int argc, char *argv[])
 {
 	struct tcplay_opts *opts;
 	int ch, error;
+	long arg_pim = -1;
 	int info_vol = 0, map_vol = 0,
 	    unmap_vol = 0, info_map = 0,
 	    create_vol = 0, modify_vol = 0;
@@ -382,6 +402,23 @@ main(int argc, char *argv[])
 		case FLAG_LONG_FDE:
 			opts->flags |= TC_FLAG_FDE;
 			break;
+		case FLAG_LONG_PIM:
+		case FLAG_LONG_PIM_HIDDEN: {
+			char *end;
+
+			arg_pim = strtol(optarg, &end, 10);
+			if (*optarg < '0' || *optarg > '9' || *end != '\0' ||
+			    arg_pim > MAX_PIM_VALUE) {
+				fprintf(stderr, "PIM must be a decimal integer between 0 and %d.\n",
+				    MAX_PIM_VALUE);
+				return EXIT_FAILURE;
+			}
+			if (ch == FLAG_LONG_PIM_HIDDEN)
+				opts->h_pim = (int)arg_pim;
+			else
+				opts->pim = (int)arg_pim;
+			break;
+		}
 		case FLAG_LONG_USE_BACKUP:
 			opts->flags |= TC_FLAG_BACKUP;
 			break;
@@ -440,6 +477,9 @@ main(int argc, char *argv[])
 	if (!(((map_vol || info_vol || create_vol || modify_vol) && opts->dev != NULL) ||
 	    ((unmap_vol || info_map) && opts->map_name != NULL)) ||
 	    (TC_FLAG_SET(opts->flags, SYS) && TC_FLAG_SET(opts->flags, FDE)) ||
+	    (arg_pim >= 0 && !map_vol && !info_vol && !modify_vol &&
+	    (!create_vol || TC_FLAG_SET(opts->flags, SYS) || TC_FLAG_SET(opts->flags, FDE))) ||
+	    (modify_vol && opts->h_pim >= 0) ||
 	    (map_vol + info_vol + create_vol + unmap_vol + info_map + modify_vol > 1) ||
 	    (opts->hidden && !create_vol) ||
 	    (TC_FLAG_SET(opts->flags, SYS) && (opts->sys_dev == NULL)) ||

@@ -41,9 +41,11 @@ name of the mapped device.
 The settings are specified in a table - the following are all possible settings:
 passphrase              | Any passphrase
 keyfiles                | path_to_kf1, path_to_kf2, ...
+pim                     | VeraCrypt PIM for the volume being opened
 protect_hidden          | yes/no
 passphrase_hidden       | Any passphrase
 keyfiles_hidden         | path_to_kf1, path_to_kf2, ...
+pim_hidden              | Hidden volume PIM with protect_hidden enabled
 use_backup              | yes/no
 
 
@@ -55,9 +57,11 @@ Where <volume_name> is a file name containing a volume.
 The settings are specified in a table - the following are all possible settings:
 passphrase              | Any passphrase
 keyfiles                | path_to_kf1, path_to_kf2, ...
+pim                     | VeraCrypt PIM for the volume being opened (CLI)
 protect_hidden          | yes/no
 passphrase_hidden       | Any passphrase
 keyfiles_hidden         | path_to_kf1, path_to_kf2, ...
+pim_hidden              | Hidden volume PIM with protect_hidden enabled (CLI)
 use_backup              | yes/no
 
 
@@ -77,12 +81,14 @@ created volume. Its size will be <size_mb> MB.
 The parameters are specified in a table - the following are all possible parameters:
 passphrase              | Any passphrase
 keyfiles                | path_to_kf1, path_to_kf2, ...
+pim                     | VeraCrypt PIM for the new volume
 pbkdf_prf               | Any valid tcplay PBKDF PRF
 cipher                  | Any valid tcplay cipher chain
 create_hidden           | yes/no
 hidden_mb               | A numeric size, e.g. 5.5 (meaning 5.5 MB)
 passphrase_hidden       | Any passphrase
 keyfiles_hidden         | path_to_kf1, path_to_kf2, ...
+pim_hidden              | VeraCrypt PIM for the new hidden volume
 pbkdf_prf_hidden        | Any valid tcplay PBKDF PRF
 cipher_hidden           | Any valid tcplay cipher chain
 
@@ -95,6 +101,7 @@ Where <volume_name> is a file name containing a volume.
 The settings are specified in a table - the following are all possible settings:
 passphrase              | Any passphrase
 keyfiles                | path_to_kf1, path_to_kf2, ...
+pim                     | Current VeraCrypt PIM (CLI)
 new_passphrase          | Any passphrase
 new_keyfiles            | path_to_kf1, path_to_kf2, ...
 new_pbkdf_prf           | Any valid tcplay PBKDF PRF
@@ -108,6 +115,10 @@ Where <volume_name> is a file name containing a volume.
 The settings are specified in a table - the following are all possible settings:
 passphrase              | Any passphrase
 keyfiles                | path_to_kf1, path_to_kf2, ...
+pim                     | VeraCrypt PIM for the backup header
+
+The API steps for saving a header to a file and restoring it from a file also
+accept pim.
 
 
 
@@ -117,7 +128,7 @@ The tables that should have been created by a previous "Given I map..." are
 specified as a table with the following headers:
 name                    | Name of the mapped volume
 begin                   | First sector of the table
-end                     | Last sector of the table
+end                     | Length of the table in sectors, as reported by dmsetup
 algo                    | Algorithm used for dm-crypt
 key                     | The master key, in hexadecimal
 offset                  | The offset on the raw device at which the volume starts
@@ -160,3 +171,7 @@ fields will be missing.
 
 
 * "Then I expect tcplay to fail"
+
+* "Then I expect no mapping named <map_name>"
+
+Checks that /dev/mapper/<map_name> does not exist after a mapping attempt.

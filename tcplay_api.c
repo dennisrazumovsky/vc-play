@@ -62,6 +62,8 @@ tc_api_uninit(void)
 
 static const char *_caps[] = {
 	"trim",
+	"pim",
+	"h_pim",
 	NULL
 };
 
@@ -243,6 +245,21 @@ tc_api_task_set(tc_api_task task, const char *key, ...)
 	} else if (_match(key, "protect_hidden")) {
 		i = va_arg(ap, int);
 		opts->protect_hidden = i;
+	} else if (_match(key, "pim") || _match(key, "h_pim")) {
+		int pim = va_arg(ap, int);
+		int hidden = _match(key, "h_pim");
+		int supported = task->op == TC_OP_CREATE || task->op == TC_OP_INFO ||
+		    task->op == TC_OP_MAP || (!hidden &&
+		    (task->op == TC_OP_MODIFY || task->op == TC_OP_RESTORE));
+
+		if (pim < 0 || pim > MAX_PIM_VALUE || !supported) {
+			errno = EINVAL;
+			r = TC_ERR;
+		} else if (hidden) {
+			opts->h_pim = pim;
+		} else {
+			opts->pim = pim;
+		}
 	} else if (_match(key, "fde")) {
 		i = va_arg(ap, int);
 		if (i)

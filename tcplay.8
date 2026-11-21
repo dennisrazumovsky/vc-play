@@ -39,7 +39,8 @@
 .Nm
 .Fl c
 .Fl d Ar device
-.Op Fl g
+.Op Fl -pim Ar number
+.Op Fl g Op Fl -pim-hidden Ar number
 .Op Fl z
 .Op Fl w
 .Op Fl a Ar pbkdf_hash
@@ -51,7 +52,8 @@
 .Nm
 .Fl i
 .Fl d Ar device
-.Op Fl e
+.Op Fl -pim Ar number
+.Op Fl e Op Fl -pim-hidden Ar number
 .Op Fl p
 .Op Fl f Ar keyfile_hidden
 .Op Fl k Ar keyfile
@@ -65,7 +67,8 @@
 .Nm
 .Fl m Ar mapping
 .Fl d Ar device
-.Op Fl e
+.Op Fl -pim Ar number
+.Op Fl e Op Fl -pim-hidden Ar number
 .Op Fl p
 .Op Fl f Ar keyfile_hidden
 .Op Fl k Ar keyfile
@@ -78,6 +81,7 @@
 .Nm
 .Fl -modify
 .Fl d Ar device
+.Op Fl -pim Ar number
 .Op Fl k Ar keyfile
 .Op Fl -new-keyfile Ar new_keyfile
 .Op Fl -new-pbkdf-prf Ar pbkdf_hash
@@ -91,6 +95,7 @@
 .Nm
 .Fl -modify
 .Fl d Ar device
+.Op Fl -pim Ar number
 .Op Fl k Ar keyfile
 .Fl -restore-from-backup-hdr
 .Op Fl w
@@ -175,6 +180,34 @@ Specifies a
 to use in addition to the passphrase.
 This option can appear multiple times; if so, multiple
 keyfiles will be used.
+.El
+.Pp
+The following options specify the VeraCrypt PIM.
+.Bl -tag -width indent
+.It Fl -pim Ns = Ns Ar number
+Specifies the Personal Iterations Multiplier (PIM) for the volume being
+created or opened, including a hidden volume opened directly.
+When creating or protecting a hidden volume, this option applies to the outer volume.
+The value is a decimal integer from 0 to 2147468.
+Zero or an omitted option uses the standard iteration count for the selected PBKDF2 PRF.
+A positive PIM applies to non-system VeraCrypt volumes and sets the iteration
+count to 15,000 plus 1,000 times the PIM.
+When creating or modifying a volume with a positive PIM, the selected PRF
+must be a VeraCrypt PRF.
+A newly created volume uses the same PIM for its primary and backup headers.
+The
+.Fl -modify
+command keeps the current PIM when writing the primary and backup headers
+or saving a header to a file.
+.It Fl -pim-hidden Ns = Ns Ar number
+Specifies the hidden volume's PIM when creating it with
+.Fl -hidden
+or protecting it with
+.Fl -protect-hidden .
+The range is the same as for
+.Fl -pim .
+Zero or an omitted option uses the hidden volume's standard iteration count,
+independently of the outer volume's PIM.
 .El
 .Pp
 Additional options for the
@@ -334,8 +367,8 @@ nor
 should be specified.
 This option implies
 .Fl -use-backup .
-Use this option to restore the volume headers from the backup
-header.
+Restoring both volume headers requires the passphrase and keyfiles of the
+backup header and, for VeraCrypt, its PIM.
 .El
 .Pp
 Sending a
@@ -359,8 +392,8 @@ Similarly, keyfiles are limited to a size of 1 MB, but up to
 .Nm
 offers plausible deniability. Hidden volumes are created within an outer
 volume.
-Which volume is accessed solely depends on the passphrase and keyfile(s)
-used.
+Which volume is accessed depends on the passphrase, keyfiles and, for
+VeraCrypt, the PIM.
 If the passphrase and keyfiles for the outer volume are specified,
 no information about the existance of the hidden volume is exposed.
 Without knowledge of the passphrase and keyfile(s) of the hidden volume
@@ -393,7 +426,7 @@ are VeraCrypt PRFs, whilst all others are legacy TrueCrypt PRFs.
 By default, new volumes are created with a VeraCrypt PRF to offer better
 security.
 .Pp
-NOTE: Failed unlocking attempts even for legacy TrueCrypt volumes now take
+With the default PIM, failed unlocking attempts even for legacy TrueCrypt volumes take
 significantly longer than before, as
 .Nm
 will cycle through all PRFs, including the VeraCrypt PRFs with much higher
@@ -414,6 +447,12 @@ and
 .Fl -map
 can more than halve the time required to unlock the volume.
 .Sh EXAMPLES
+Create a VeraCrypt outer volume with PIM 600 and a hidden volume with PIM 700.
+.Bd -ragged -offset indent
+.Nm Fl -create Fl -device Ns = Ns Ar device
+.Fl -pim Ns = Ns Cm 600 Fl -hidden Fl -pim-hidden Ns = Ns Cm 700
+.Ed
+.Pp
 Create a new TrueCrypt volume on
 .Pa /dev/vn0
 using the cipher cascade
@@ -522,8 +561,8 @@ as specified by the
 and
 .Fl -pbkdf-prf-hidden
 options.
-Which volume is later accessed depends only on which passphrase and keyfile(s)
-are being used,
+Which volume is later accessed depends on the passphrase, keyfiles and, for
+VeraCrypt, the PIM,
 so that the existance of the hidden volume remains unknown without knowledge
 of the passphrase and keyfile it is protected by since it is located within
 the outer volume.
@@ -555,8 +594,8 @@ command can be used:
 .Fl -restore-from-backup-hdr
 .Ed
 .Pp
-As with most other commands, which header is saved (used as source) depends
-on the passphrase and keyfiles used.
+The passphrase, keyfiles and, for VeraCrypt, the PIM determine whether the
+outer or hidden header is restored.
 .Pp
 To save a backup copy of a header, the following command can be used:
 .Bd -ragged -offset indent
@@ -566,26 +605,30 @@ To save a backup copy of a header, the following command can be used:
 .Ed
 .Pp
 As with most other commands, which header is saved (used as source) depends
-on the passphrase and keyfiles used.
+on the passphrase, keyfiles and, for VeraCrypt, the PIM.
 .Pp
 To restore a header from a backup header file, the following command can be
 used:
 .Bd -ragged -offset indent
 .Nm Fl -modify
-.Nm -use-hdr-file Ns = Ns Cm /tmp/sdb_backup_header.hdr
+.Fl -device Ns = Ns Cm /dev/sdb
+.Fl -restore-from-backup-hdr
+.Fl -use-hdr-file Ns = Ns Cm /tmp/sdb_backup_header.hdr
 .Ed
 .Pp
 Similarly, to restore a hidden header from a backup header file:
 .Bd -ragged -offset indent
 .Nm Fl -modify
-.Nm -use-hidden-hdr-file Ns = Ns Cm /tmp/sdb_backup_hidden_header.hdr
+.Fl -device Ns = Ns Cm /dev/sdb
+.Fl -restore-from-backup-hdr
+.Fl -use-hidden-hdr-file Ns = Ns Cm /tmp/sdb_backup_hidden_header.hdr
 .Ed
 .Pp
 Which header is used as the source of the operation will still depend on the
-passphrase and keyfiles used.
+passphrase, keyfiles and, for VeraCrypt, the PIM.
 Even if you use the
 .Fl -use-hidden-hdr-file
-option, if you specify the passphrase and keyfiles for the main header, the
+option, if the supplied credentials open the main header, the
 main header will be used instead.
 .Sh SEE ALSO
 .Xr crypttab 5 ,

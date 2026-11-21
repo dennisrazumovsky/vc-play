@@ -109,6 +109,8 @@ library supports the following features:
 .Bl -column "some_long_feature" "Description"
 .It Sy Feature         Ta Sy Description
 .It Li trim            Ta    Allows enabling discards/TRIM when mapping a volume
+.It Li pim             Ta    Supports the VeraCrypt PIM for create, info, map, modify and restore operations
+.It Li h_pim           Ta    Supports a separate PIM when creating or protecting a hidden volume
 .El
 .Pp
 The
@@ -206,6 +208,8 @@ indicates the setting is optional.
 .It Li cipher_chain             Ta    "*"    Ta         Ta        Ta          Ta                Ta           Ta    ""
 .It Li h_cipher_chain           Ta    "*"    Ta         Ta        Ta          Ta                Ta           Ta    ""
 .It Li protect_hidden           Ta           Ta    "*"  Ta    "*" Ta          Ta                Ta           Ta    ""
+.It Li pim                      Ta    "*"    Ta    "*"  Ta    "*" Ta          Ta                Ta    "*"    Ta    "*"
+.It Li h_pim                    Ta    "*"    Ta    "*"  Ta    "*" Ta          Ta                Ta           Ta    ""
 .It Li fde                      Ta           Ta    "*"  Ta    "*" Ta          Ta                Ta           Ta    ""
 .It Li sys                      Ta           Ta    "*"  Ta    "*" Ta          Ta                Ta    "?"    Ta    "?"
 .It Li use_backup_header        Ta           Ta    "*"  Ta    "*" Ta          Ta                Ta    "*"    Ta    "*"
@@ -291,6 +295,40 @@ The vararg is of type
 When enabled, the outer volume ends immediately before the first sector of
 the hidden volume.
 Using this mode requires both outer and hidden passphrases and keyfiles.
+.It pim
+The vararg is of type
+.Ft int .
+The valid range is 0 to 2147468 inclusive.
+It specifies the VeraCrypt Personal Iterations Multiplier (PIM) for creating or opening
+a non-system volume, including direct access to a hidden volume.
+A positive value requires a VeraCrypt PRF and sets its iteration count to
+15000 + (1000 * PIM).
+The
+.Fa sys
+and
+.Fa fde
+options require a PIM of zero.
+Zero or an omitted option uses the default iteration count of each PRF.
+The
+.Sy modify
+operation keeps the current PIM when writing the primary and backup headers
+or saving a header to a file.
+The
+.Sy restore
+operation uses the PIM, passphrase and keyfiles of the header being restored.
+.It h_pim
+The vararg is of type
+.Ft int .
+The valid range is the same as for
+.Fa pim .
+When creating a hidden volume or when
+.Fa protect_hidden
+is enabled,
+.Fa pim
+applies to the outer volume and
+.Fa h_pim
+applies to the hidden volume.
+Zero or an omitted option uses the hidden volume's default iteration count.
 .It sys
 The vararg is of type
 .Ft const char * .

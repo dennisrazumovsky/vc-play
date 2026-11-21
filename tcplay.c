@@ -322,8 +322,7 @@ print_info(struct tcplay_info *info)
 
 	if (info->pbkdf_prf != NULL) {
 		printf("PBKDF2 PRF:\t\t%s\n", info->pbkdf_prf->name);
-		printf("PBKDF2 iterations:\t%d\n",
-		    info->pbkdf_prf->iteration_count);
+		printf("PBKDF2 iterations:\t%d\n", info->iteration_count);
 	}
 
 	printf("Cipher:\t\t\t%s\n",
@@ -449,12 +448,24 @@ adjust_info(struct tcplay_info *info, struct tcplay_info *hinfo)
 	return 0;
 }
 
-int
+static int
+apply_pim(struct pbkdf_prf_algo *prf, int pim)
+{
+	if (pim <= 0)
+		return 0;
+	if (prf->sys || strcmp(prf->sig, VC_SIG) != 0)
+		return EINVAL;
+	prf->iteration_count = 15000 + pim * 1000;
+	return 0;
+}
+
+static int
 process_hdr(const char *dev, int flags, unsigned char *pass, int passlen,
-    struct tchdr_enc *ehdr, struct tcplay_info **pinfo)
+    int pim, struct tchdr_enc *ehdr, struct tcplay_info **pinfo)
 {
 	struct tchdr_dec *dhdr;
 	struct tcplay_info *info;
+	struct pbkdf_prf_algo prf;
 	struct tc_cipher_chain *cipher_chain = NULL;
 	unsigned char *key;
 	int i, j, found, error;
@@ -469,19 +480,20 @@ process_hdr(const char *dev, int flags, unsigned char *pass, int passlen,
 	/* Start search for correct algorithm combination */
 	found = 0;
 	for (i = 0; !found && pbkdf_prf_algos[i].name != NULL; i++) {
+		prf = pbkdf_prf_algos[i];
+		if (apply_pim(&prf, pim) != 0)
+			continue;
 #ifdef DEBUG
-		printf("\nTrying PRF algo %s (%d)\n", pbkdf_prf_algos[i].name,
-		    pbkdf_prf_algos[i].iteration_count);
+		printf("\nTrying PRF algo %s (%d)\n", prf.name, prf.iteration_count);
 		printf("Salt: ");
 		print_hex(ehdr->salt, 0, sizeof(ehdr->salt));
 #endif
-		error = pbkdf2(&pbkdf_prf_algos[i], (char *)pass, passlen,
+		error = pbkdf2(&prf, (char *)pass, passlen,
 		    ehdr->salt, sizeof(ehdr->salt),
 		    MAX_KEYSZ, key);
 
 		if (error) {
-			tc_log(1, "pbkdf failed for algorithm %s\n",
-			    pbkdf_prf_algos[i].name);
+			tc_log(1, "pbkdf failed for algorithm %s\n", prf.name);
 			free_safe_mem(key);
 			return EINVAL;
 		}
@@ -505,7 +517,7 @@ process_hdr(const char *dev, int flags, unsigned char *pass, int passlen,
 				return EINVAL;
 			}
 
-			if (verify_hdr(dhdr, &pbkdf_prf_algos[i])) {
+			if (verify_hdr(dhdr, &prf)) {
 #ifdef DEBUG
 				printf("tc_str: %.4s, tc_ver: %d, tc_min_ver: %d, "
 				    "crc_keys: %d, sz_vol: %"PRIu64", "
@@ -535,6 +547,7 @@ process_hdr(const char *dev, int flags, unsigned char *pass, int passlen,
 		return ENOMEM;
 	}
 
+	info->iteration_count = prf.iteration_count;
 	*pinfo = info;
 
 	return 0;
@@ -550,8 +563,16 @@ create_volume(struct tcplay_opts *opts)
 	size_t blksz;
 	struct tchdr_enc *ehdr, *hehdr;
 	struct tchdr_enc *ehdr_backup, *hehdr_backup;
+	const struct pbkdf_prf_algo *base_prf;
+	struct pbkdf_prf_algo outer_prf, hidden_prf;
 	uint64_t tmp;
 	int error, r, ret;
+
+	if (opts->h_pim >= 0 && !opts->hidden) {
+		tc_log(1, "A hidden volume PIM requires creating a hidden volume\n");
+		errno = EINVAL;
+		return -1;
+	}
 
 	pass = h_pass = pass_again = NULL;
 	ehdr = hehdr = NULL;
@@ -560,12 +581,32 @@ create_volume(struct tcplay_opts *opts)
 
 	if (opts->cipher_chain == NULL)
 		opts->cipher_chain = tc_cipher_chains[0];
-	if (opts->prf_algo == NULL)
-		opts->prf_algo = &pbkdf_prf_algos[DEFAULT_PRF_ALGO_IDX];
+
 	if (opts->h_cipher_chain == NULL)
 		opts->h_cipher_chain = opts->cipher_chain;
-	if (opts->h_prf_algo == NULL)
-		opts->h_prf_algo = opts->prf_algo;
+
+	base_prf = &pbkdf_prf_algos[DEFAULT_PRF_ALGO_IDX];
+	if (opts->prf_algo != NULL)
+		base_prf = opts->prf_algo;
+
+	outer_prf = *base_prf;
+	if (apply_pim(&outer_prf, opts->pim) != 0) {
+		tc_log(1, "A positive PIM for the outer volume requires a VeraCrypt PRF\n");
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (opts->hidden) {
+		hidden_prf = *base_prf;
+		if (opts->h_prf_algo != NULL)
+			hidden_prf = *opts->h_prf_algo;
+
+		if (apply_pim(&hidden_prf, opts->h_pim) != 0) {
+			tc_log(1, "A positive PIM for the hidden volume requires a VeraCrypt PRF\n");
+			errno = EINVAL;
+			return -1;
+		}
+	}
 
 	if ((error = get_disk_info(opts->dev, &blocks, &blksz)) != 0) {
 		tc_log(1, "could not get disk info\n");
@@ -784,7 +825,7 @@ create_volume(struct tcplay_opts *opts)
 	/* create encrypted headers */
 	ehdr = create_hdr((unsigned char *)pass,
 	    (opts->nkeyfiles > 0)?MAX_PASSSZ:strlen(pass),
-	    opts->prf_algo, opts->cipher_chain, blksz, blocks, VOL_RSVD_BYTES_START/blksz,
+	    &outer_prf, opts->cipher_chain, blksz, blocks, VOL_RSVD_BYTES_START/blksz,
 	    blocks - (MIN_VOL_BYTES/blksz), 0, opts->weak_keys_and_salt, &ehdr_backup);
 	if (ehdr == NULL) {
 		tc_log(1, "Could not create header\n");
@@ -793,7 +834,7 @@ create_volume(struct tcplay_opts *opts)
 
 	if (opts->hidden) {
 		hehdr = create_hdr((unsigned char *)h_pass,
-		    (opts->n_hkeyfiles > 0)?MAX_PASSSZ:strlen(h_pass), opts->h_prf_algo,
+		    (opts->n_hkeyfiles > 0)?MAX_PASSSZ:strlen(h_pass), &hidden_prf,
 		    opts->h_cipher_chain,
 		    blksz, blocks,
 		    blocks - (VOL_RSVD_BYTES_END/blksz) - hidden_blocks,
@@ -870,13 +911,24 @@ info_map_common(struct tcplay_opts *opts, char *passphrase_out)
 	struct tcplay_info *info, *hinfo = NULL;
 	char *pass;
 	char *h_pass;
-	int error, error2 = 0;
+	int error;
 	size_t sz;
 	size_t blksz;
 	disksz_t blocks;
 	int is_hidden = 0;
 	int try_empty = 0;
 	int retries;
+
+	if (opts->h_pim >= 0 && !opts->protect_hidden) {
+		tc_log(1, "A hidden volume PIM requires hidden volume protection\n");
+		errno = EINVAL;
+		return NULL;
+	}
+	if ((opts->pim > 0 || opts->h_pim > 0) && (opts->flags & (TC_FLAG_SYS | TC_FLAG_FDE))) {
+		tc_log(1, "A positive PIM requires a non-system VeraCrypt volume\n");
+		errno = EINVAL;
+		return NULL;
+	}
 
 	if ((error = get_disk_info(opts->dev, &blocks, &blksz)) != 0) {
 		tc_log(1, "could not get disk information\n");
@@ -1027,29 +1079,26 @@ info_map_common(struct tcplay_opts *opts, char *passphrase_out)
 
 		error = process_hdr(opts->dev, opts->flags, (unsigned char *)pass,
 		    (opts->nkeyfiles > 0)?MAX_PASSSZ:strlen(pass),
-		    ehdr, &info);
+		    opts->pim, ehdr, &info);
 
 		/*
 		 * Try to process hidden header if we have to protect the hidden
 		 * volume, or the decryption/verification of the main header
 		 * failed.
 		 */
-		if (hehdr && (error || opts->protect_hidden)) {
-			if (error) {
-				error2 = process_hdr(opts->dev, opts->flags, (unsigned char *)pass,
-				    (opts->nkeyfiles > 0)?MAX_PASSSZ:strlen(pass), hehdr,
-				    &info);
-				is_hidden = !error2;
-			} else if (opts->protect_hidden) {
-				error2 = process_hdr(opts->dev, opts->flags, (unsigned char *)h_pass,
-				    (opts->n_hkeyfiles > 0)?MAX_PASSSZ:strlen(h_pass), hehdr,
-				    &hinfo);
-			}
+		if (hehdr && error && !opts->protect_hidden) {
+			error = process_hdr(opts->dev, opts->flags, (unsigned char *)pass,
+			    (opts->nkeyfiles > 0)?MAX_PASSSZ:strlen(pass),
+			    opts->pim, hehdr, &info);
+			is_hidden = !error;
+		} else if (hehdr && !error && opts->protect_hidden) {
+			error = process_hdr(opts->dev, opts->flags, (unsigned char *)h_pass,
+			    (opts->n_hkeyfiles > 0)?MAX_PASSSZ:strlen(h_pass),
+			    opts->h_pim, hehdr, &hinfo);
 		}
 
 		/* We need both to protect a hidden volume */
-		if ((opts->protect_hidden && (error || error2)) ||
-		    (error && error2)) {
+		if (error || (opts->protect_hidden && hinfo == NULL)) {
 			if (!try_empty)
 				tc_log(1, "Incorrect password or not a TrueCrypt volume\n");
 
@@ -1197,7 +1246,7 @@ modify_volume(struct tcplay_opts *opts)
 	struct tchdr_enc *ehdr, *ehdr_backup;
 	const char *new_passphrase = opts->new_passphrase;
 	const char **new_keyfiles = opts->new_keyfiles;
-	struct pbkdf_prf_algo *new_prf_algo = opts->new_prf_algo;
+	struct pbkdf_prf_algo prf;
 	int n_newkeyfiles = opts->n_newkeyfiles;
 	char *pass, *pass_again;
 	int ret = -1;
@@ -1223,12 +1272,21 @@ modify_volume(struct tcplay_opts *opts)
 		}
 		new_keyfiles = opts->keyfiles;
 		n_newkeyfiles = opts->nkeyfiles;
-		new_prf_algo = NULL;
 	}
 
 	info = info_map_common(opts, pass);
 	if (info == NULL)
 		goto out;
+
+	/* By default stick to current PRF algo */
+	prf = *info->pbkdf_prf;
+	if (opts->new_prf_algo != NULL && !TC_FLAG_SET(opts->flags, ONLY_RESTORE))
+		prf = *opts->new_prf_algo;
+	if (apply_pim(&prf, opts->pim) != 0) {
+		tc_log(1, "A positive PIM requires a VeraCrypt PRF\n");
+		errno = EINVAL;
+		goto out;
+	}
 
 	if (opts->interactive && !TC_FLAG_SET(opts->flags, ONLY_RESTORE)) {
 		if (((pass = alloc_safe_mem(PASS_BUFSZ)) == NULL) ||
@@ -1276,8 +1334,8 @@ modify_volume(struct tcplay_opts *opts)
 	}
 
 	ehdr = copy_reencrypt_hdr((unsigned char *)pass,
-	    (opts->n_newkeyfiles > 0)?MAX_PASSSZ:strlen(pass),
-	    new_prf_algo, opts->weak_keys_and_salt, info, &ehdr_backup);
+	    (n_newkeyfiles > 0)?MAX_PASSSZ:strlen(pass),
+	    &prf, opts->weak_keys_and_salt, info, &ehdr_backup);
 	if (ehdr == NULL) {
 		tc_log(1, "Could not create header\n");
 		goto out;
@@ -1344,7 +1402,7 @@ out:
 	if (ehdr_backup)
 		free_safe_mem(ehdr_backup);
 	if (info)
-		free_safe_mem(info);
+		free_info(info);
 
 	return ret;
 }
@@ -2046,19 +2104,17 @@ check_cipher_chain(const char *cipher_chain, int quiet)
 struct pbkdf_prf_algo *
 check_prf_algo(const char *algo, int sys, int quiet)
 {
-	int i, found = 0;
+	int i;
 
 	for (i = 0; pbkdf_prf_algos[i].name != NULL; i++) {
 		if (sys != pbkdf_prf_algos[i].sys)
 			continue;
 
-		if (strcmp(algo, pbkdf_prf_algos[i].name) == 0) {
-			found = 1;
-			break;
-		}
+		if (strcmp(algo, pbkdf_prf_algos[i].name) == 0)
+			return &pbkdf_prf_algos[i];
 	}
 
-	if (!found && !quiet) {
+	if (!quiet) {
 		fprintf(stderr, "Valid PBKDF PRF algorithms are: ");
 		for (i = 0; pbkdf_prf_algos[i].name != NULL; i++) {
 			if (sys != pbkdf_prf_algos[i].sys)
@@ -2066,10 +2122,9 @@ check_prf_algo(const char *algo, int sys, int quiet)
 			fprintf(stderr, "%s ", pbkdf_prf_algos[i].name);
 		}
 		fprintf(stderr, "\n");
-		return NULL;
 	}
 
-	return &pbkdf_prf_algos[i];
+	return NULL;
 }
 
 int
@@ -2098,6 +2153,7 @@ struct tcplay_opts *opts_init(void)
 	memset(opts, 0, sizeof(*opts));
 
 	opts->retries = DEFAULT_RETRIES;
+	opts->h_pim = -1;
 	opts->secure_erase = 1;
 
 	return opts;

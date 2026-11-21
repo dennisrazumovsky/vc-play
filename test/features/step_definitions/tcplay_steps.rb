@@ -30,6 +30,8 @@ Given /^I map volume ([^\s]+) as ([^\s]+) using the following settings:$/ do |vo
     "-m #{map}",
     "-d #{loop_dev}"
   ]
+  @args << "--pim=#{Integer(s['pim'], 10)}" if s['pim']
+  @args << "--pim-hidden=#{Integer(s['pim_hidden'], 10)}" if s['pim_hidden']
 
   ParseHelper.csv_parse(s['keyfiles']) { |kf| @args << "-k \"keyfiles/#{kf}\"" } unless s['keyfiles'].nil?
   ParseHelper.csv_parse(s['keyfiles_hidden']) { |kf| @args << "-f \"keyfiles/#{kf}\"" } unless s['keyfiles_hidden'].nil?
@@ -56,11 +58,13 @@ Given /^I map volume ([^\s]+) as ([^\s]+) using the following settings:$/ do |vo
         tcplay_io.write("#{s['passphrase_hidden']}\n")
       end
     end
+    tcplay_io.close_write
+    tcplay_io.read # Keep stdout open for tcplay's final status message.
   end
 
   @error = ($? != 0)
 
-  @mappings << map
+  @mappings << map unless @error
   @maps = DMSetupHelper.get_crypt_mappings("#{map}")
 end
 
@@ -85,6 +89,8 @@ Given /^I create a volume ([^\s]+) of size (\d+)M with the following parameters:
     create_hidden = true
   end
 
+  @args << "--pim=#{Integer(s['pim'], 10)}" if s['pim']
+  @args << "--pim-hidden=#{Integer(s['pim_hidden'], 10)}" if s['pim_hidden']
   @args << "-a #{s['pbkdf_prf'].strip}" unless s['pbkdf_prf'].nil?
   @args << "-b #{s['cipher'].strip}" unless s['cipher'].nil?
   @args << "-x #{s['pbkdf_prf_hidden'].strip}" unless s['pbkdf_prf_hidden'].nil?
@@ -96,9 +102,8 @@ Given /^I create a volume ([^\s]+) of size (\d+)M with the following parameters:
   @files_to_delete << "volumes/#{vol}"
 
   IO.popen("#{@tcplay} #{@args.join(' ')}", mode='r+') do |tcplay_io|
-    tcplay_io.expect /Passphrase/, 10 do
-      tcplay_io.write("#{s['passphrase']}\n")
-    end
+    next unless tcplay_io.expect(/Passphrase/, 10)
+    tcplay_io.write("#{s['passphrase']}\n")
 
     tcplay_io.expect /Repeat/, 10 do
       tcplay_io.write("#{s['passphrase']}\n")
@@ -120,6 +125,8 @@ Given /^I create a volume ([^\s]+) of size (\d+)M with the following parameters:
     tcplay_io.expect /Are you sure/, 10 do
       tcplay_io.write("y\n")
     end
+    tcplay_io.close_write
+    tcplay_io.read
   end
   @error = ($? != 0)
 end
@@ -136,6 +143,8 @@ Given /^I request information about volume ([^\s]+) using the following settings
     "-i",
     "-d #{loop_dev}"
   ]
+  @args << "--pim=#{Integer(s['pim'], 10)}" if s['pim']
+  @args << "--pim-hidden=#{Integer(s['pim_hidden'], 10)}" if s['pim_hidden']
 
   ParseHelper.csv_parse(s['keyfiles']) { |kf| @args << "-k \"keyfiles/#{kf}\"" } unless s['keyfiles'].nil?
   ParseHelper.csv_parse(s['keyfiles_hidden']) { |kf| @args << "-f \"keyfiles/#{kf}\"" } unless s['keyfiles_hidden'].nil?
@@ -205,6 +214,7 @@ Given /^I modify volume ([^\s]+) using the following settings:$/ do |vol,setting
     "-w", # We don't want to wait for /dev/random to have enough entropy
   ]
 
+  @args << "--pim=#{Integer(s['pim'], 10)}" if s['pim']
   ParseHelper.csv_parse(s['keyfiles']) { |kf| @args << "-k \"keyfiles/#{kf}\"" } unless s['keyfiles'].nil?
   ParseHelper.csv_parse(s['new_keyfiles']) { |kf| @args << "--new-keyfile=\"keyfiles/#{kf}\"" } unless s['new_keyfiles'].nil?
 
@@ -228,6 +238,8 @@ Given /^I modify volume ([^\s]+) using the following settings:$/ do |vol,setting
     tcplay_io.expect /Repeat/, 10 do
       tcplay_io.write("#{s['new_passphrase']}\n")
     end
+    tcplay_io.close_write
+    tcplay_io.read
   end
   @error = ($? != 0)
 end
@@ -245,6 +257,7 @@ Given /^I modify volume ([^\s]+) by restoring from the backup header using the f
     "-w", # We don't want to wait for /dev/random to have enough entropy
   ]
 
+  @args << "--pim=#{Integer(s['pim'], 10)}" if s['pim']
   ParseHelper.csv_parse(s['keyfiles']) { |kf| @args << "-k \"keyfiles/#{kf}\"" } unless s['keyfiles'].nil?
 
   s['passphrase'] ||= ''
@@ -255,6 +268,8 @@ Given /^I modify volume ([^\s]+) by restoring from the backup header using the f
         tcplay_io.write("#{s['passphrase']}\n")
       end
     end
+    tcplay_io.close_write
+    tcplay_io.read
   end
   @error = ($? != 0)
 end
@@ -333,6 +348,10 @@ end
 Then /^I expect dmsetup to have the following tables:$/ do |tables|
   tables.map_headers! { |h| h.to_sym }
   tables.diff!(@maps)
+end
+
+Then /^I expect no mapping named (\S+)$/ do |map|
+  File.exist?("/dev/mapper/#{map}").should == false
 end
 
 
